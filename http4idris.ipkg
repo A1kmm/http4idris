@@ -1,0 +1,4 @@
+package http4idris
+
+opts = "-p contrib"
+modules = Network.Wai
