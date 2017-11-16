@@ -41,7 +41,7 @@ runApplication m {tcpSockets} bindTo port app =
     incomingConnectionLoop : (sourceAddr : SocketAddress)
                           -> (sock : Var)
                           -> ST m () [remove sock (Sock tcpSockets Connected)]
-    incomingConnectionLoop = do
+    incomingConnectionLoop = ?fixMe
       -- TODO: Consider some kind of timeout on incoming connections
       
     applicationAcceptLoop : (listener: Var) -> ST m String [listener ::: Sock tcpSockets Listening :-> Sock tcpSockets Failed]

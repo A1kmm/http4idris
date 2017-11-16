@@ -84,6 +84,12 @@ readFromBufferedSocket {m} {tcpSocketInstance} sock = with ST do
     else
       pure (Just result)
     
+ifWithProofs : (x : Bool) -> ((x = True) -> a) -> (not x = True -> a) -> a
+ifWithProofs True f _ = f Refl
+ifWithProofs False _ f = f Refl
+
+-- TODO - We probably want an upper limit on the line length if we are going to use this for HTTP, as otherwise it could have
+--        unbounded memory usage.
 export
 readLineFromSocket : {m : Type -> Type}
                      -> {auto tcpSocketInstance : TcpSockets m}
@@ -98,9 +104,11 @@ readLineFromSocket {m} {tcpSocketInstance} sock = go ""
       Just readData <- readFromBufferedSocket {m} {tcpSocketInstance} sock
         | Nothing => pure Nothing
       let (beforeNewline, afterNewline) = break (\x => x == '\n') readData
-      if afterNewline == "" then
-        go (pfx ++ beforeNewline)
-      else do
-        call (putIOBuffer {m} sock (strTail' afterNewline ?prf))
-        pure $ Just $ pfx ++ beforeNewline
-      
+      ifWithProofs (afterNewline == "")
+        (\_ =>
+          go (pfx ++ beforeNewline)
+        )
+        (\proofNotEmpty => do
+          call (putIOBuffer {m} sock (strTail' afterNewline proofNotEmpty))
+          pure $ Just $ pfx ++ beforeNewline
+        )
