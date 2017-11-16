@@ -13,6 +13,9 @@ addFirstIfJust ty = Add (
     Just (v, _) => [v ::: ty ]
                         )
 
+public export maybeCaseOnly : b -> b -> Maybe a -> b
+maybeCaseOnly x y m = if isJust m then y else x
+
 -- Interface built using record not interface so we can use Sock more
 -- easily.
 public export record TcpSockets (m : Type -> Type) where
@@ -28,14 +31,14 @@ public export record TcpSockets (m : Type -> Type) where
            -> (withNewSocket : (newAddr: SocketAddress) -> (newSocket : Var)
                 -> ST m () [remove newSocket (Sock Connected)])
            -> ST m (Maybe SocketAddress) [
-                listeningSocket ::: Sock Listening :-> maybe (Sock Failed) (const $ Sock Listening)
+                listeningSocket ::: Sock Listening :-> maybeCaseOnly (Sock Failed) (Sock Listening)
               ]
   close : {origSt : TcpSocketState} -> (sock : Var) -> ST m () [remove sock (Sock origSt)]
   readSocket : (sock : Var) -> ST m (Maybe String) [
-    sock ::: Sock Connected :-> maybe (Sock Failed) (\_ => Sock Connected)
+    sock ::: Sock Connected :-> maybeCaseOnly (Sock Failed) (Sock Connected)
   ]
   writeSocket : (out : String) -> (sock : Var) -> ST m (Maybe String) [
-    sock ::: Sock Connected :-> maybe (Sock Failed) (const $ Sock Connected)
+    sock ::: Sock Connected :-> maybeCaseOnly (Sock Failed) (Sock Connected)
   ]
 
 -- Hardcoded for now - if not, we need to prove it is within bound and non-negative
