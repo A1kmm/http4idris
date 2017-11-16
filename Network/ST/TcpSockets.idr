@@ -6,15 +6,12 @@ import Network.Socket
 
 public export data TcpSocketState = Ready | Bound | Listening | Connected | Failed
 
-export addressIPv4 : Int -> Int -> Int -> Int -> SocketAddress
-addressIPv4 a b c d = IPv4Addr a b c d
-
 public export addFirstIfJust : Type -> Action (Maybe (Var, a))
 addFirstIfJust ty = Add (
   \inp => case inp of
     Nothing => []
     Just (v, _) => [v ::: ty ]
-                     )
+                        )
 
 -- Interface built using record not interface so we can use Sock more
 -- easily.
@@ -26,12 +23,12 @@ public export record TcpSockets (m : Type -> Type) where
          -> (port : Int)
          -> (sock : Var)
          -> ST m Bool [sock ::: Sock Ready :-> (\v => if v then Sock Bound else Sock Ready)]
-  listen : (sock : Var) -> ST m Bool [sock ::: Sock Bound :-> (\v => if v then Sock Bound else Sock Failed)]
+  listen : (sock : Var) -> ST m Bool [sock ::: Sock Bound :-> (\v => if v then Sock Listening else Sock Failed)]
   accept : (listeningSocket : Var)
            -> (withNewSocket : (newAddr: SocketAddress) -> (newSocket : Var)
                 -> ST m () [remove newSocket (Sock Connected)])
            -> ST m (Maybe SocketAddress) [
-                listeningSocket ::: Sock Listening
+                listeningSocket ::: Sock Listening :-> maybe (Sock Failed) (const $ Sock Listening)
               ]
   close : {origSt : TcpSocketState} -> (sock : Var) -> ST m () [remove sock (Sock origSt)]
   readSocket : (sock : Var) -> ST m (Maybe String) [
@@ -40,19 +37,6 @@ public export record TcpSockets (m : Type -> Type) where
   writeSocket : (out : String) -> (sock : Var) -> ST m (Maybe String) [
     sock ::: Sock Connected :-> maybe (Sock Failed) (const $ Sock Connected)
   ]
-
-writeSocketFully : {m : Type -> Type} ->
-                   {auto tcpSocketInstance : TcpSockets m} ->
-                   (out : String) ->
-                   (sock : Var) ->
-                   ST m Bool [
-                     sock ::: (Sock tcpSocketInstance Connected) :-> (\v => if v then (Sock tcpSocketInstance Connected) else (Sock tcpSocketInstance Failed))
-                     ]
-writeSocketFully "" _ = pure True
-writeSocketFully {tcpSocketInstance} out sock = with ST do
-  case !(writeSocket tcpSocketInstance out sock) of
-    Nothing => pure False
-    Just out' => writeSocketFully out' sock
 
 -- Hardcoded for now - if not, we need to prove it is within bound and non-negative
 readBufSize : ByteLength

@@ -3,3 +3,5 @@ package http4idris
 opts = "-p contrib"
 modules =   Network.Wai
           , Network.ST.TcpSockets
+          , Control.Funext
+
