@@ -1,4 +1,5 @@
 package http4idris
 
 opts = "-p contrib"
-modules = Network.Wai
+modules =   Network.Wai
+          , Network.ST.TcpSockets

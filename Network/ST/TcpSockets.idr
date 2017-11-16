@@ -34,6 +34,29 @@ public export record TcpSockets (m : Type -> Type) where
                 listeningSocket ::: Sock Listening
               ]
   close : {origSt : TcpSocketState} -> (sock : Var) -> ST m () [remove sock (Sock origSt)]
+  readSocket : (sock : Var) -> ST m (Maybe String) [
+    sock ::: Sock Connected :-> maybe (Sock Failed) (\_ => Sock Connected)
+  ]
+  writeSocket : (out : String) -> (sock : Var) -> ST m (Maybe String) [
+    sock ::: Sock Connected :-> maybe (Sock Failed) (const $ Sock Connected)
+  ]
+
+writeSocketFully : {m : Type -> Type} ->
+                   {auto tcpSocketInstance : TcpSockets m} ->
+                   (out : String) ->
+                   (sock : Var) ->
+                   ST m Bool [
+                     sock ::: (Sock tcpSocketInstance Connected) :-> (\v => if v then (Sock tcpSocketInstance Connected) else (Sock tcpSocketInstance Failed))
+                     ]
+writeSocketFully "" _ = pure True
+writeSocketFully {tcpSocketInstance} out sock = with ST do
+  case !(writeSocket tcpSocketInstance out sock) of
+    Nothing => pure False
+    Just out' => writeSocketFully out' sock
+
+-- Hardcoded for now - if not, we need to prove it is within bound and non-negative
+readBufSize : ByteLength
+readBufSize = 4096
 
 %hint export ioTcpSockets : TcpSockets IO
 ioTcpSockets = MkTcpSockets
@@ -64,8 +87,27 @@ ioTcpSockets = MkTcpSockets
     pure $ Just addr)
   {- close -} (\sockVar => do
     lift $ Socket.close !(read sockVar)
-    delete sockVar
-  )
+    delete sockVar)
+  {- readSocket -} (\sockVar => with ST do
+      Right (resp, _) <- lift $ Socket.recv !(read sockVar) readBufSize
+       | Left _ => pure Nothing
+      pure (Just resp))
+  {- writeSocket -} (\out => \sockVar => with ST do
+      Right count <- lift $ Socket.send !(read sockVar) out
+       | Left _ => pure Nothing
+      let countNat : Nat = cast count
+      
+      -- Here we assert that any successful (non-negative) return value from
+      -- send is less than or equal to the original size of the buffer. The manpage
+      -- for send says:
+      --   On success, these calls return the number of bytes sent.
+      --   On error, -1 is returned, and errno is set appropriately.
+      -- For this assertion to be falsified, the kernel would need to be telling us
+      -- it had sent more data than we asked it to, which is against the contract
+      -- of send.
+      let sendReturnValueLTELength : LTE countNat (length out) = believe_me ()
+      pure $ Just $ substr countNat ((length out) - countNat) out
+    )
   where
   forkIO : IO () -> IO ()
   forkIO f = do
