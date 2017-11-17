@@ -3,6 +3,7 @@ module Network.ST.IOUtils
 import Control.ST
 import Network.ST.TcpSockets
 import Control.Funext
+import Data.Nat.NatTheorems
 
 export
 writeSocketFully : {m : Type -> Type} ->
@@ -131,17 +132,6 @@ readLineFromSocket {m} {tcpSocketInstance} sock = go ""
           pure $ Just $ pfx ++ beforeNewline
         )      
 
-total
-ltAZIsFalse : (a : Nat) -> (a < 0)
-ltAZIsFalse Z = Refl
-ltAZIsFalse (S _) = Refl
-
-total
-aLtBImpliesALTEB : (a : Nat) -> (b : Nat) -> {auto prf : (a < b) = True} -> LTE a b
-aLtBImpliesALTEB Z _ = LTEZero
-aLtBImpliesALTEB a Z {prf} = ?hole -- absurd (rewrite ltAZIsFalse a in prf)
-aLtBImpliesALTEB (S left) (S right) {prf} = auto -- aLtBImpliesALTEB left right {prf = prf}
-
 export
 readFullyFromSocket : {m : Type -> Type}
                       -> {auto tcpSocketInstance : TcpSockets m}
@@ -150,9 +140,6 @@ readFullyFromSocket : {m : Type -> Type}
                       -> ST m (Maybe String) (maybeBufferedSocketFails sock)
 readFullyFromSocket {m} {tcpSocketInstance} l sock = go l ""
   where
-    -- notLTIsFlippedLTE : (n : Nat) -> (m : Nat) -> {auto prf: not (n < m) = True} -> LTE m n
-    -- notLTIsFlippedLTE n m {prf} = ?inEqProof
-  
     go : (remaining : Nat) -> String -> ST m (Maybe String) (maybeBufferedSocketFails sock)
     go Z s = pure $ Just s
     go remaining pfx = with ST do
@@ -162,12 +149,13 @@ readFullyFromSocket {m} {tcpSocketInstance} l sock = go l ""
       ifWithProofs (dataLen < remaining)
         (\proofLt =>
           let
-            prfComparison : LTE dataLen remaining = aLtBImpliesALTEB dataLen remaining
+            prfComparison : LTE dataLen remaining = natALTBImpliesALTEB dataLen remaining (natALtBIsTrueImpliesLTAB dataLen remaining proofLt)
           in
             go (remaining - dataLen) (pfx ++ readData)
         )
         (\proofNotLt => with ST do
-          let prfComparison : LTE remaining dataLen = ?proveMe
+          let prfComparison : LTE remaining dataLen =
+            natALtBIsFalseImpliesGTEAB dataLen remaining (NotAEqNotBImpliesAEqB (dataLen < remaining) False proofNotLt)
           call $ putIOBuffer {m} sock (substr remaining (dataLen - remaining) readData)
           pure $ Just $ pfx ++ substr 0 remaining readData
         )
