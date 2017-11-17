@@ -33,7 +33,7 @@ initIOBuffer : {m : Type -> Type}
                            , sock ::: Sock tcpSocketInstance st]
 initIOBuffer sock = new (MkIOBuffer "")
 
-export
+export total
 initBufferedSocket : {m : Type -> Type}
                      -> {auto tcpSocketInstance : TcpSockets m}
                      -> (sock : Var)
@@ -45,14 +45,14 @@ initBufferedSocket sock = with ST do
   ioBuf <- initIOBuffer sock
   pure $ ((MkBufferedSocket sock ioBuf) ** Refl)
 
-export
+export total
 deleteIOBuffer : {m : Type -> Type}
                -> (sock : Var)
                -> (sockBuffer : Var)
                -> ST m () [remove sockBuffer (State $ IOBuffer sock)]
 deleteIOBuffer _ sockBuffer = ST.delete sockBuffer
 
-export
+export total
 closeBufferedSocket : {m : Type -> Type}
                     -> {auto tcpSocketInstance : TcpSockets m}
                     -> (sock : BufferedSocket)
@@ -62,7 +62,7 @@ closeBufferedSocket {tcpSocketInstance} sock = do
   call $ deleteIOBuffer (ioSocket sock) (ioBuffer sock)
   call $ close tcpSocketInstance (ioSocket sock)
 
-export
+export total
 putIOBuffer : {m : Type -> Type}
             -> (sock : BufferedSocket)
             -> String
@@ -72,7 +72,7 @@ putIOBuffer sock newData =
     ioBufferContents = newData ++ (ioBufferContents buf)
   } buf)
 
-export
+export total
 takeIOBuffer : {m : Type -> Type}
             -> (sock : BufferedSocket)
             -> ST m String [(ioBuffer sock) ::: State (IOBuffer (ioSocket sock))]
@@ -81,7 +81,7 @@ takeIOBuffer sock = do
   write (ioBuffer sock) $ MkIOBuffer ""
   pure contents
 
-public export
+public export total
 %error_reduce -- always evaluate this before showing errors
 maybeBufferedSocketFails : {auto tcpSocketInstance : TcpSockets m} -> {ty : Type} -> (sock : BufferedSocket) -> List (Action (Maybe ty))
 maybeBufferedSocketFails {tcpSocketInstance} {ty} sock = [
@@ -89,7 +89,7 @@ maybeBufferedSocketFails {tcpSocketInstance} {ty} sock = [
   , (ioSocket sock) ::: (Sock tcpSocketInstance Connected :-> wrappedMaybeCaseOnly (Sock tcpSocketInstance) Failed Connected)
   ]
 
-export
+export total
 readFromBufferedSocket : {m : Type -> Type}
                        -> {auto tcpSocketInstance : TcpSockets m}
                        -> (sock : BufferedSocket)
@@ -101,7 +101,7 @@ readFromBufferedSocket {m} {tcpSocketInstance} sock = with ST do
     else
       pure (Just result)
     
-export
+export total
 ifWithProofs : (x : Bool) -> ((x = True) -> a) -> (not x = True -> a) -> a
 ifWithProofs True f _ = f Refl
 ifWithProofs False _ f = f Refl
@@ -121,12 +121,53 @@ readLineFromSocket {m} {tcpSocketInstance} sock = go ""
     go pfx = with ST do
       Just readData <- readFromBufferedSocket {m} {tcpSocketInstance} sock
         | Nothing => pure Nothing
-      let (beforeNewline, afterNewline) = break (\x => x == '\n') readData
-      ifWithProofs (afterNewline == "")
+      let (beforeNewline, afterAndIncludingNewline) = break (\x => x == '\n') readData
+      ifWithProofs (afterAndIncludingNewline == "")
         (\_ =>
           go (pfx ++ beforeNewline)
         )
         (\proofNotEmpty => do
-          call (putIOBuffer {m} sock (strTail' afterNewline proofNotEmpty))
+          call (putIOBuffer {m} sock (strTail' afterAndIncludingNewline proofNotEmpty))
           pure $ Just $ pfx ++ beforeNewline
+        )      
+
+total
+ltAZIsFalse : (a : Nat) -> (a < 0)
+ltAZIsFalse Z = Refl
+ltAZIsFalse (S _) = Refl
+
+total
+aLtBImpliesALTEB : (a : Nat) -> (b : Nat) -> {auto prf : (a < b) = True} -> LTE a b
+aLtBImpliesALTEB Z _ = LTEZero
+aLtBImpliesALTEB a Z {prf} = ?hole -- absurd (rewrite ltAZIsFalse a in prf)
+aLtBImpliesALTEB (S left) (S right) {prf} = auto -- aLtBImpliesALTEB left right {prf = prf}
+
+export
+readFullyFromSocket : {m : Type -> Type}
+                      -> {auto tcpSocketInstance : TcpSockets m}
+                      -> (readLength : Nat)
+                      -> (sock : BufferedSocket)
+                      -> ST m (Maybe String) (maybeBufferedSocketFails sock)
+readFullyFromSocket {m} {tcpSocketInstance} l sock = go l ""
+  where
+    -- notLTIsFlippedLTE : (n : Nat) -> (m : Nat) -> {auto prf: not (n < m) = True} -> LTE m n
+    -- notLTIsFlippedLTE n m {prf} = ?inEqProof
+  
+    go : (remaining : Nat) -> String -> ST m (Maybe String) (maybeBufferedSocketFails sock)
+    go Z s = pure $ Just s
+    go remaining pfx = with ST do
+      Just readData <- readFromBufferedSocket {m} {tcpSocketInstance} sock
+        | Nothing => pure Nothing
+      let dataLen : Nat = length readData
+      ifWithProofs (dataLen < remaining)
+        (\proofLt =>
+          let
+            prfComparison : LTE dataLen remaining = aLtBImpliesALTEB dataLen remaining
+          in
+            go (remaining - dataLen) (pfx ++ readData)
+        )
+        (\proofNotLt => with ST do
+          let prfComparison : LTE remaining dataLen = ?proveMe
+          call $ putIOBuffer {m} sock (substr remaining (dataLen - remaining) readData)
+          pure $ Just $ pfx ++ substr 0 remaining readData
         )

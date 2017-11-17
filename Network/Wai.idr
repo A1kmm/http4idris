@@ -104,6 +104,17 @@ runApplication m {tcpSockets} bindTo port app =
         then pure $ Just $ ValidRequest $ MkHttpRequest method httpHeaders ""
         else pure (Just InvalidRequest)
   
+    withContentLength : HttpRequest -> Maybe Nat
+    withContentLength req = ?withContentLength
+  
+    readHTTPBody : (sock : BufferedSocket) -> (req : HttpRequest) ->
+                      ST m (Maybe String) (maybeBufferedSocketFails {tcpSocketInstance = tcpSockets} {ty = String} sock)
+    readHTTPBody sock req =
+      case withContentLength req of
+        Nothing => pure $ Just ""
+        Just contentLength => do
+          
+  
     incomingConnectionLoop : (sourceAddr : SocketAddress)
                           -> (rawSock : Var)
                           -> ST m () [remove rawSock (Sock tcpSockets Connected)]
