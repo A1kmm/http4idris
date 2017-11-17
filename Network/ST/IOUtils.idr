@@ -101,6 +101,7 @@ readFromBufferedSocket {m} {tcpSocketInstance} sock = with ST do
     else
       pure (Just result)
     
+export
 ifWithProofs : (x : Bool) -> ((x = True) -> a) -> (not x = True -> a) -> a
 ifWithProofs True f _ = f Refl
 ifWithProofs False _ f = f Refl

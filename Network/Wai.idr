@@ -70,16 +70,39 @@ runApplication m {tcpSockets} bindTo port app =
     close tcpSockets listenerSocket
     pure err  
   where
-    readHTTPHeaders : (sock : BufferedSocket) ->
+    rtrim : String -> String
+    rtrim = reverse . ltrim . reverse
+    readHTTPHeaders : (sock : BufferedSocket) -> List HttpHeader -> ST m (Maybe (InvalidRequestOr (List HttpHeader))) (maybeBufferedSocketFails {tcpSocketInstance = tcpSockets} {ty = (InvalidRequestOr (List HttpHeader))} sock)
+    readHTTPHeaders sock otherHeaders = do
+      Just line <- readLineFromSocket sock
+        | Nothing => pure Nothing
+      if line == "" then
+        pure $ Just $ ValidRequest otherHeaders
+      else do
+        let (headerNameUntrimmed, headerValueWithPfx) = break (==':') line
+        ifWithProofs (headerValueWithPfx == "")
+          (\_ => pure $ Just $ InvalidRequest)
+          (\prfNonEmpty => do
+            let headerName = rtrim headerNameUntrimmed
+            let headerValue = trim (strTail' headerValueWithPfx prfNonEmpty)
+            readHTTPHeaders sock (MkHttpHeader headerName headerValue :: otherHeaders)
+          )
+  
+    readHTTPHead : (sock : BufferedSocket) ->
                       ST m (Maybe (InvalidRequestOr HttpRequest)) (maybeBufferedSocketFails {tcpSocketInstance = tcpSockets} {ty = (InvalidRequestOr HttpRequest)} sock)
-    readHTTPHeaders sock = with ST do
+    readHTTPHead sock = with ST do
       Just result <- readLineFromSocket sock
         | Nothing => pure Nothing
       let (method, afterMethod) = break (==' ') (trim result)
-      let (path, version) = break (==' ') (ltrim afterMethod)
-      case (version == "HTTP/1.1" || version == "HTTP/1.0") of
-        False => pure (Just InvalidRequest)
-        True => pure $ Just $ ValidRequest $ MkHttpRequest "GET" [] ""
+      let (path, versionAndSpace) = break (==' ') (ltrim afterMethod)
+      let version = ltrim versionAndSpace
+      Just (ValidRequest httpHeaders) <- readHTTPHeaders sock []
+        | Nothing => pure Nothing
+        | Just InvalidRequest => pure (Just InvalidRequest)
+      -- TODO: HTTP/2
+      if (version == "HTTP/1.1" || version == "HTTP/1.0")
+        then pure $ Just $ ValidRequest $ MkHttpRequest method httpHeaders ""
+        else pure (Just InvalidRequest)
   
     incomingConnectionLoop : (sourceAddr : SocketAddress)
                           -> (rawSock : Var)
@@ -92,7 +115,7 @@ runApplication m {tcpSockets} bindTo port app =
         go : (sock : BufferedSocket) -> ST m (Maybe ()) (maybeBufferedSocketFails {tcpSocketInstance = tcpSockets} {ty = ()} sock)
         go sock = with ST do
           -- TODO: Consider some kind of timeout on incoming connections
-          Just (ValidRequest headers) <- readHTTPHeaders sock
+          Just (ValidRequest headers) <- readHTTPHead sock
             | Nothing => pure Nothing
             | Just InvalidRequest => 
               -- To do: Send a 400 error.
