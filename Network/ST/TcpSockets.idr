@@ -1,7 +1,6 @@
 module Network.ST.TcpSockets
 
 import Control.ST
-
 import Network.Socket
 
 public export data TcpSocketState = Ready | Bound | Listening | Connected | Failed
@@ -10,11 +9,13 @@ public export addFirstIfJust : Type -> Action (Maybe (Var, a))
 addFirstIfJust ty = Add (
   \inp => case inp of
     Nothing => []
-    Just (v, _) => [v ::: ty ]
+    Just (v, _) => [v ::: ty]
                         )
 
-public export maybeCaseOnly : b -> b -> Maybe a -> b
-maybeCaseOnly x y m = if isJust m then y else x
+public export
+%error_reduce -- always evaluate this before showing errors
+wrappedMaybeCaseOnly : {a : Type} -> {b : Type} -> {c : Type} -> (b -> c) -> b -> b -> Maybe a -> c
+wrappedMaybeCaseOnly f x y m = f (if isJust m then y else x)
 
 -- Interface built using record not interface so we can use Sock more
 -- easily.
@@ -31,14 +32,14 @@ public export record TcpSockets (m : Type -> Type) where
            -> (withNewSocket : (newAddr: SocketAddress) -> (newSocket : Var)
                 -> ST m () [remove newSocket (Sock Connected)])
            -> ST m (Maybe SocketAddress) [
-                listeningSocket ::: Sock Listening :-> maybeCaseOnly (Sock Failed) (Sock Listening)
+                listeningSocket ::: Sock Listening :-> wrappedMaybeCaseOnly Sock Failed Listening
               ]
   close : {origSt : TcpSocketState} -> (sock : Var) -> ST m () [remove sock (Sock origSt)]
   readSocket : (sock : Var) -> ST m (Maybe String) [
-    sock ::: Sock Connected :-> maybeCaseOnly (Sock Failed) (Sock Connected)
+    sock ::: Sock Connected :-> wrappedMaybeCaseOnly Sock Failed Connected
   ]
   writeSocket : (out : String) -> (sock : Var) -> ST m (Maybe String) [
-    sock ::: Sock Connected :-> maybeCaseOnly (Sock Failed) (Sock Connected)
+    sock ::: Sock Connected :-> wrappedMaybeCaseOnly Sock Failed Connected
   ]
 
 -- Hardcoded for now - if not, we need to prove it is within bound and non-negative

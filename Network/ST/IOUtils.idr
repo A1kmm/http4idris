@@ -16,7 +16,6 @@ writeSocketFully {tcpSocketInstance} out sock = with ST do
     Nothing => pure False
     Just out' => writeSocketFully out' sock
 
-
 export
 record IOBuffer (sock : Var) where
   constructor MkIOBuffer
@@ -34,17 +33,17 @@ initIOBuffer : {m : Type -> Type}
                            , sock ::: Sock tcpSocketInstance st]
 initIOBuffer sock = new (MkIOBuffer "")
 
--- export
+export
 initBufferedSocket : {m : Type -> Type}
                      -> {auto tcpSocketInstance : TcpSockets m}
                      -> (sock : Var)
-                     -> ST m BufferedSocket [
-                          Add (\bs : BufferedSocket => [(ioBuffer bs) ::: (State (IOBuffer sock))])
+                     -> ST m (bufSock : BufferedSocket ** (sock = ioSocket bufSock)) [
+                          Add (\bs => [(ioBuffer $ fst $ bs) ::: (State (IOBuffer sock))])
                           , sock ::: Sock tcpSocketInstance st
                         ]
 initBufferedSocket sock = with ST do
   ioBuf <- initIOBuffer sock
-  pure $ MkBufferedSocket sock ioBuf
+  pure $ ((MkBufferedSocket sock ioBuf) ** Refl)
 
 export
 deleteIOBuffer : {m : Type -> Type}
@@ -52,6 +51,16 @@ deleteIOBuffer : {m : Type -> Type}
                -> (sockBuffer : Var)
                -> ST m () [remove sockBuffer (State $ IOBuffer sock)]
 deleteIOBuffer _ sockBuffer = ST.delete sockBuffer
+
+export
+closeBufferedSocket : {m : Type -> Type}
+                    -> {auto tcpSocketInstance : TcpSockets m}
+                    -> (sock : BufferedSocket)
+                    -> ST m () [ remove (ioBuffer sock) (State $ IOBuffer (ioSocket sock))
+                               , remove (ioSocket sock) (Sock tcpSocketInstance st)]
+closeBufferedSocket {tcpSocketInstance} sock = do
+  call $ deleteIOBuffer (ioSocket sock) (ioBuffer sock)
+  call $ close tcpSocketInstance (ioSocket sock)
 
 export
 putIOBuffer : {m : Type -> Type}
@@ -72,11 +81,19 @@ takeIOBuffer sock = do
   write (ioBuffer sock) $ MkIOBuffer ""
   pure contents
 
+public export
+%error_reduce -- always evaluate this before showing errors
+maybeBufferedSocketFails : {auto tcpSocketInstance : TcpSockets m} -> {ty : Type} -> (sock : BufferedSocket) -> List (Action (Maybe ty))
+maybeBufferedSocketFails {tcpSocketInstance} {ty} sock = [
+    (ioBuffer sock) ::: State (IOBuffer (ioSocket sock))
+  , (ioSocket sock) ::: (Sock tcpSocketInstance Connected :-> wrappedMaybeCaseOnly (Sock tcpSocketInstance) Failed Connected)
+  ]
+
 export
 readFromBufferedSocket : {m : Type -> Type}
                        -> {auto tcpSocketInstance : TcpSockets m}
                        -> (sock : BufferedSocket)
-                       -> ST m (Maybe String) [(ioBuffer sock) ::: State (IOBuffer (ioSocket sock)), (ioSocket sock) ::: Sock tcpSocketInstance Connected :-> maybeCaseOnly (Sock tcpSocketInstance Failed) (Sock tcpSocketInstance Connected)]
+                       -> ST m (Maybe String) (maybeBufferedSocketFails sock)
 readFromBufferedSocket {m} {tcpSocketInstance} sock = with ST do
     result <- ST.call (takeIOBuffer sock)
     if result == "" then
@@ -94,12 +111,12 @@ export
 readLineFromSocket : {m : Type -> Type}
                      -> {auto tcpSocketInstance : TcpSockets m}
                      -> (sock : BufferedSocket)
-                     -> ST m (Maybe String) [(ioBuffer sock) ::: State (IOBuffer (ioSocket sock)), (ioSocket sock) ::: Sock tcpSocketInstance Connected :-> maybeCaseOnly (Sock tcpSocketInstance Failed) (Sock tcpSocketInstance Connected)]
+                     -> ST m (Maybe String) (maybeBufferedSocketFails sock)
 readLineFromSocket {m} {tcpSocketInstance} sock = go ""
   where
     go : String -> ST m (Maybe String) [
           (ioBuffer sock) ::: State (IOBuffer (ioSocket sock)),
-          (ioSocket sock) ::: Sock tcpSocketInstance Connected :-> maybeCaseOnly (Sock tcpSocketInstance Failed) (Sock tcpSocketInstance Connected)]
+          (ioSocket sock) ::: Sock tcpSocketInstance Connected :-> wrappedMaybeCaseOnly (Sock tcpSocketInstance) Failed Connected]
     go pfx = with ST do
       Just readData <- readFromBufferedSocket {m} {tcpSocketInstance} sock
         | Nothing => pure Nothing
