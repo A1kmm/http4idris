@@ -3,6 +3,8 @@ import Control.ST
 import Network.ST.TcpSockets
 import Network.ST.IOUtils
 import Network.Socket.Data
+import Data.Bool.BoolTheorems
+import Data.String.StringUtils
 
 public export
 data PendingRequest = MkPendingRequest
@@ -48,13 +50,17 @@ data Application : (m : Type -> Type) -> Type where
                    -> Application m
 
 export
+getHttpHeader : (wantedHeaderName : String) -> (req : HttpRequest) -> Maybe HttpHeader
+getHttpHeader hn req = find (\h => toLower (headerName h) == toLower hn) (headers req)
+
+export
 runApplication : (m : Type -> Type)
                  -> {tcpSockets: TcpSockets m}
                  -> (bindTo: Maybe SocketAddress)
                  -> (port: Int)
                  -> (app: Application m)
                  -> ST m String []
-runApplication m {tcpSockets} bindTo port app =
+runApplication m {tcpSockets} bindTo port (MkApplication appFn) =
   do
     Just listenerSocket <- socket tcpSockets
       | Nothing => pure "Can't create listener socket"
@@ -105,15 +111,34 @@ runApplication m {tcpSockets} bindTo port app =
         else pure (Just InvalidRequest)
   
     withContentLength : HttpRequest -> Maybe Nat
-    withContentLength req = ?withContentLength
+    withContentLength req = do
+      contentLengthStr <- getHttpHeader "Content-Length" req
+      cast (headerValue contentLengthStr)
   
     readHTTPBody : (sock : BufferedSocket) -> (req : HttpRequest) ->
                       ST m (Maybe String) (maybeBufferedSocketFails {tcpSocketInstance = tcpSockets} {ty = String} sock)
     readHTTPBody sock req =
       case withContentLength req of
         Nothing => pure $ Just ""
-        Just contentLength => do
-          
+        Just contentLength =>
+          readFullyFromSocket {tcpSocketInstance = tcpSockets} contentLength sock
+  
+    e400Content : String
+    e400Content = "Your browser sent a request the server couldn't understand."
+    e400Msg : String
+    e400Msg = "HTTP/1.1 400 Bad Request\r\nContent-Length: " ++ (show e400Content)
+               ++ "\r\n\r\n" ++ e400Content
+  
+    send400 : (sock : BufferedSocket) -> ST m (Maybe ()) (maybeBufferedSocketFails {tcpSocketInstance = tcpSockets} {ty = ()} sock)
+    send400 sock = do
+      True <- call (writeSocketFully {m} {tcpSocketInstance = tcpSockets}
+                     e400Msg (ioSocket sock))
+        | False => pure Nothing
+      pure $ Just ()
+  
+    runAppCall : ((pendingRequest : Var) -> ST m () [remove pendingRequest PendingRequest]) -> ST m (Maybe ()) (maybeBufferedSocketFails {tcpSocketInstance = tcpSockets} {ty = ()} sock)
+  
+    sendResponse : HttpResponse -> ST m () [remove pendingRequest PendingRequest]
   
     incomingConnectionLoop : (sourceAddr : SocketAddress)
                           -> (rawSock : Var)
@@ -129,10 +154,12 @@ runApplication m {tcpSockets} bindTo port app =
           Just (ValidRequest headers) <- readHTTPHead sock
             | Nothing => pure Nothing
             | Just InvalidRequest => 
-              -- To do: Send a 400 error.
-              pure (Just ())
-          -- body <- ?readHTTPBody
-          -- let req = record { body = body } headers
+              send400 sock
+          Just body <- readHTTPBody sock headers
+            | Nothing => pure Nothing
+          let req = record { body = body } headers
+          Just _ <- runAppCall (\pendingReq => appFn pendingReq sendResponse req)
+            | Nothing => pure Nothing
           go sock
 
     applicationAcceptLoop : (listener: Var) -> ST m String [listener ::: Sock tcpSockets Listening :-> Sock tcpSockets Failed]

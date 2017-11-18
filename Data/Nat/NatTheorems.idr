@@ -1,22 +1,54 @@
-module Data.Nat.NatThereoms
+module Data.Nat.NatTheorems
+
+import Data.Bool.BoolTheorems
 
 %default total
 %access export
 
--- Lemmas about Bool to support main theorems (move somewhere else?)
-AOrFalseIsA : (a : Bool) -> a || False = a
-AOrFalseIsA True = Refl
-AOrFalseIsA False = Refl
+-- Raw Nat comparison is very inefficient at runtime, so lets make some faster
+-- operations that take advantage of the compiler optimisations for Nat, and make
+-- some assertions about them. Note that toIntegerNat and fromInteger are special
+-- case in the compiler to be the identity, overriding their normal definitions.
 
-NotAEqNotBImpliesAEqB : (a : Bool) -> (b : Bool) -> (not a = not b) -> (a = b)
-NotAEqNotBImpliesAEqB True True _ = Refl
-NotAEqNotBImpliesAEqB False False _ = Refl
-NotAEqNotBImpliesAEqB True False prf = absurd prf
-NotAEqNotBImpliesAEqB False True prf = absurd prf
+public export
+eqNat : Nat -> Nat -> Bool
+eqNat x y = toIntegerNat x == toIntegerNat y
 
-NotNotCancels : (a : Bool) -> a = True -> not (not a) = True
-NotNotCancels True prf = prf
-NotNotCancels False prf = prf
+public export
+ltNat : Nat -> Nat -> Bool
+ltNat x y = toIntegerNat x < toIntegerNat y
+
+public export
+leNat : Nat -> Nat -> Bool
+leNat x y = toIntegerNat x <= toIntegerNat y
+
+public export
+gtNat : Nat -> Nat -> Bool
+gtNat x y = toIntegerNat x > toIntegerNat y
+
+public export
+geNat : Nat -> Nat -> Bool
+geNat x y = toIntegerNat x >= toIntegerNat y
+
+%hint
+eqNatIsEq : eqNat x y = r -> x == y = r
+eqNatIsEq prf = believe_me prf
+
+%hint
+ltNatIsLt : {x: Nat} -> {y : Nat} -> {r: Bool} -> ltNat x y = r -> x < y = r
+ltNatIsLt prf = believe_me prf
+
+%hint
+leNatIsLt : leNat x y = r -> x <= y = r
+leNatIsLt prf = believe_me prf
+
+%hint
+gtNatIsLt : gtNat x y = r -> x > y = r
+gtNatIsLt prf = believe_me prf
+
+%hint
+geNatIsLt : geNat x y = r -> x >= y = r
+geNatIsLt prf = believe_me prf
 
 -- Theorems about Nat compare
 

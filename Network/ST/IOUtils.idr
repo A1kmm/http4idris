@@ -4,6 +4,7 @@ import Control.ST
 import Network.ST.TcpSockets
 import Control.Funext
 import Data.Nat.NatTheorems
+import Data.Bool.BoolTheorems
 
 export
 writeSocketFully : {m : Type -> Type} ->
@@ -98,14 +99,9 @@ readFromBufferedSocket : {m : Type -> Type}
 readFromBufferedSocket {m} {tcpSocketInstance} sock = with ST do
     result <- ST.call (takeIOBuffer sock)
     if result == "" then
-      call (readSocket {m} tcpSocketInstance (ioSocket sock))    
+      call (readSocket {m} tcpSocketInstance (ioSocket sock))
     else
       pure (Just result)
-    
-export total
-ifWithProofs : (x : Bool) -> ((x = True) -> a) -> (not x = True -> a) -> a
-ifWithProofs True f _ = f Refl
-ifWithProofs False _ f = f Refl
 
 -- TODO - We probably want an upper limit on the line length if we are going to use this for HTTP, as otherwise it could have
 --        unbounded memory usage.
@@ -146,16 +142,16 @@ readFullyFromSocket {m} {tcpSocketInstance} l sock = go l ""
       Just readData <- readFromBufferedSocket {m} {tcpSocketInstance} sock
         | Nothing => pure Nothing
       let dataLen : Nat = length readData
-      ifWithProofs (dataLen < remaining)
+      ifWithProofs (dataLen `ltNat` remaining)
         (\proofLt =>
           let
-            prfComparison : LTE dataLen remaining = natALTBImpliesALTEB dataLen remaining (natALtBIsTrueImpliesLTAB dataLen remaining proofLt)
+            prfComparison : LTE dataLen remaining = natALTBImpliesALTEB dataLen remaining (natALtBIsTrueImpliesLTAB dataLen remaining (ltNatIsLt proofLt))
           in
             go (remaining - dataLen) (pfx ++ readData)
         )
         (\proofNotLt => with ST do
           let prfComparison : LTE remaining dataLen =
-            natALtBIsFalseImpliesGTEAB dataLen remaining (NotAEqNotBImpliesAEqB (dataLen < remaining) False proofNotLt)
+            natALtBIsFalseImpliesGTEAB dataLen remaining (ltNatIsLt (NotAEqNotBImpliesAEqB (dataLen `ltNat` remaining) False proofNotLt))
           call $ putIOBuffer {m} sock (substr remaining (dataLen - remaining) readData)
           pure $ Just $ pfx ++ substr 0 remaining readData
         )

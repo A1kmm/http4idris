@@ -2,6 +2,8 @@ package http4idris
 
 opts = "-p contrib"
 modules =   Data.Nat.NatTheorems
+          , Data.Bool.BoolTheorems
+          , Data.String.StringUtils
           , Network.Wai
           , Network.ST.TcpSockets
           , Control.Funext
