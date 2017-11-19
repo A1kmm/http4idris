@@ -4,7 +4,7 @@ opts = "-p contrib"
 modules =   Data.Nat.NatTheorems
           , Data.Bool.BoolTheorems
           , Data.String.StringUtils
-          , Network.Wai
           , Network.ST.TcpSockets
-          , Control.Funext
-
+          , Network.ST.IOUtils          
+          , Network.Wai
+          , Network.DefaultHttpEngine

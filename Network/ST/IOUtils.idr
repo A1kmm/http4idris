@@ -2,7 +2,6 @@ module Network.ST.IOUtils
 
 import Control.ST
 import Network.ST.TcpSockets
-import Control.Funext
 import Data.Nat.NatTheorems
 import Data.Bool.BoolTheorems
 
@@ -118,7 +117,7 @@ readLineFromSocket {m} {tcpSocketInstance} sock = go ""
     go pfx = with ST do
       Just readData <- readFromBufferedSocket {m} {tcpSocketInstance} sock
         | Nothing => pure Nothing
-      let (beforeNewline, afterAndIncludingNewline) = break (\x => x == '\n') readData
+      let (beforeNewline, afterAndIncludingNewline) = break (=='\n') readData
       ifWithProofs (afterAndIncludingNewline == "")
         (\_ =>
           go (pfx ++ beforeNewline)
