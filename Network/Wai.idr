@@ -6,8 +6,12 @@ import Network.Socket.Data
 import Data.Bool.BoolTheorems
 import Data.String.StringUtils
 
-public export
-data PendingRequest = MkPendingRequest
+export
+PendingRequest : (socks : TcpSockets m) -> Type
+PendingRequest socks = Composite [ 
+                                   State (sock: BufferedSocket ** (IOBuffer (ioSocket sock)))
+                                 , CFSock socks
+                                 ]
 
 public export
 record HttpResponseCode where
@@ -33,6 +37,7 @@ record HttpResponse where
   constructor MkHttpResponse
   code : HttpResponseCode
   headers : List HttpHeader
+  body : String
 
 public export
 data InvalidRequestOr : a -> Type where
@@ -40,27 +45,96 @@ data InvalidRequestOr : a -> Type where
   InvalidRequest : InvalidRequestOr a
 
 public export
-interface CanRespondHTTP (m : Type -> Type) where
-  respondHttp : HttpResponse -> ST m () [remove pendingRequest PendingRequest]
-
-public export
-data Application : (m : Type -> Type) -> Type where
-  MkApplication : ((pendingRequest : Var) -> (HttpResponse -> ST m () [remove pendingRequest PendingRequest]) 
-                   -> (req : HttpRequest) -> ST m () [remove pendingRequest PendingRequest])
-                   -> Application m
+record HttpEngine (m : Type -> Type) where
+  constructor MkHttpEngine
+  Application : Type
+  EngineState : Type
+  httpEngineActions : EngineState -> (ty : Type) -> List (Action ty)
+  pendingRequestVar : EngineState -> Var
+  PendingRequest : Type
+  sendResponse : (engineState: EngineState) -> HttpResponse ->
+                     ST m () ((remove (pendingRequestVar engineState) PendingRequest)::
+                              (httpEngineActions engineState ()))
+  mkApplication : ((engineState : EngineState) ->
+                   HttpRequest ->
+                   ST m () ((remove (pendingRequestVar engineState) PendingRequest)::
+                            (httpEngineActions engineState ()))
+                  ) -> Application
+  runApplication : (bindTo: Maybe SocketAddress) -> (port: Int) ->
+                   (app: Application) -> ST m String []
 
 export
 getHttpHeader : (wantedHeaderName : String) -> (req : HttpRequest) -> Maybe HttpHeader
 getHttpHeader hn req = find (\h => toLower (headerName h) == toLower hn) (headers req)
 
-export
-runApplication : (m : Type -> Type)
+record DefaultHttpEngineState where
+  constructor MkDefaultHttpEngineState
+  enginePendingRequestVar : Var
+  engineBufferedSocket : BufferedSocket
+
+DefaultHttpPendingRequest : Type
+DefaultHttpPendingRequest = State ()
+
+%error_reduce
+defaultHttpEngineActions : {tcpSockets: TcpSockets m} -> DefaultHttpEngineState -> (ty : Type) -> List (Action ty)
+defaultHttpEngineActions {tcpSockets} st ty =
+    [ioBuffer (engineBufferedSocket st) ::: State (IOBuffer $ ioSocket (engineBufferedSocket st)),
+     ioSocket (engineBufferedSocket st) ::: CFSock tcpSockets]
+
+data DefaultHttpApplication : (m : Type -> Type) -> (tcpSockets: TcpSockets m) -> Type where
+  MkDefaultHttpApplication :
+    ((engineState : DefaultHttpEngineState) -> HttpRequest
+       -> ST m () ((remove (enginePendingRequestVar engineState) DefaultHttpPendingRequest)::(defaultHttpEngineActions {tcpSockets} engineState ()))) -> DefaultHttpApplication m tcpSockets
+
+joinByCRLF : List String -> String
+joinByCRLF args =
+    go "" args
+  where
+    go : String -> List String -> String
+    go pfx [] = pfx
+    go pfx (h::t) = go (pfx ++ h ++ "\n") t
+
+httpHeaderToString : HttpHeader -> String
+httpHeaderToString (MkHttpHeader n v) =
+  n ++ ": " ++ v
+
+httpResponseToString : HttpResponse -> String
+httpResponseToString resp =
+  joinByCRLF $ 
+   ("HTTP/1.1 " ++ (show . responseNumber . code $ resp) ++ " " ++
+    (show . responseText . code $ resp))::
+   ((map httpHeaderToString
+         ((MkHttpHeader "Content-Length" (show . Strings.length . body $ resp)) ::
+          (headers resp))) ++ ["", body resp])
+
+defaultHttpEngineSendResponse : (m : Type -> Type) -> (tcpSockets: TcpSockets m)
+    -> (engineState: DefaultHttpEngineState)
+    -> HttpResponse
+    -> ST m () ((remove (enginePendingRequestVar engineState) DefaultHttpPendingRequest)::
+                              (defaultHttpEngineActions {m} {tcpSockets} engineState ()))
+defaultHttpEngineSendResponse m tcpSockets st resp =
+     with ST do
+       delete (enginePendingRequestVar st)
+       True <- call $ fromCFSock tcpSockets (ioSocket (engineBufferedSocket st))
+         | False => with ST do
+             call $ toCFSock tcpSockets Failed Refl (ioSocket (engineBufferedSocket st))
+             pure ()
+       True <- call $ writeSocketFully {m} {tcpSocketInstance = tcpSockets}
+                (httpResponseToString resp)
+                (ioSocket (engineBufferedSocket st))
+         | False => with ST do
+             call $ toCFSock tcpSockets Failed Refl (ioSocket (engineBufferedSocket st))
+             pure ()       
+       call $ toCFSock tcpSockets Connected Refl (ioSocket (engineBufferedSocket st))
+
+
+defaultHttpEngineRunApplication : {m : Type -> Type}
                  -> {tcpSockets: TcpSockets m}
                  -> (bindTo: Maybe SocketAddress)
                  -> (port: Int)
-                 -> (app: Application m)
+                 -> (app: DefaultHttpApplication m tcpSockets)
                  -> ST m String []
-runApplication m {tcpSockets} bindTo port (MkApplication appFn) =
+defaultHttpEngineRunApplication {m} {tcpSockets} bindTo port app =
   do
     Just listenerSocket <- socket tcpSockets
       | Nothing => pure "Can't create listener socket"
@@ -136,9 +210,24 @@ runApplication m {tcpSockets} bindTo port (MkApplication appFn) =
         | False => pure Nothing
       pure $ Just ()
   
-    runAppCall : ((pendingRequest : Var) -> ST m () [remove pendingRequest PendingRequest]) -> ST m (Maybe ()) (maybeBufferedSocketFails {tcpSocketInstance = tcpSockets} {ty = ()} sock)
-  
-    sendResponse : HttpResponse -> ST m () [remove pendingRequest PendingRequest]
+    runAppCall : (sock : BufferedSocket) -> HttpRequest -> DefaultHttpApplication m tcpSockets -> ST m (Maybe ()) (maybeBufferedSocketFails {tcpSocketInstance = tcpSockets} {ty = ()} sock)
+    runAppCall sock req (MkDefaultHttpApplication appFn) =
+        with ST do
+          call $ toCFSock tcpSockets Connected Refl (ioSocket sock)
+          pendingRequest <- new ()
+          let engineState : DefaultHttpEngineState = MkDefaultHttpEngineState pendingRequest sock
+          appFn engineState req
+          let engineBufferedSocketPrf : (engineBufferedSocket engineState = sock) = Refl
+          doFromCFSock
+      where
+        doFromCFSock : ST m (Maybe ()) [
+            (ioBuffer sock) ::: State (IOBuffer (ioSocket sock))
+          , ioSocket sock ::: (CFSock tcpSockets) :-> wrappedMaybeCaseOnly (Sock tcpSockets) Failed Connected
+        ]
+        doFromCFSock = with ST do
+          True <- call $ fromCFSock tcpSockets (ioSocket sock)
+          | False => pure Nothing
+          pure (Just ())
   
     incomingConnectionLoop : (sourceAddr : SocketAddress)
                           -> (rawSock : Var)
@@ -158,7 +247,7 @@ runApplication m {tcpSockets} bindTo port (MkApplication appFn) =
           Just body <- readHTTPBody sock headers
             | Nothing => pure Nothing
           let req = record { body = body } headers
-          Just _ <- runAppCall (\pendingReq => appFn pendingReq sendResponse req)
+          Just _ <- runAppCall sock req app
             | Nothing => pure Nothing
           go sock
 
@@ -169,3 +258,14 @@ runApplication m {tcpSockets} bindTo port (MkApplication appFn) =
       Just _ <- accept tcpSockets listener incomingConnectionLoop
         | Nothing => pure "Failed to accept"
       applicationAcceptLoop listener
+
+defaultHttpEngine : (m : Type -> Type) -> (tcpSockets : TcpSockets m) -> HttpEngine m
+defaultHttpEngine m tcpSockets = MkHttpEngine
+  {- Application -} (DefaultHttpApplication m tcpSockets)
+  {- EngineState -} DefaultHttpEngineState
+  {- httpEngineActions -} defaultHttpEngineActions
+  {- pendingRequestVar -} enginePendingRequestVar
+  {- PendingRequest -} DefaultHttpPendingRequest
+  {- sendResponse -} (defaultHttpEngineSendResponse m tcpSockets)
+  {- mkApplication -} MkDefaultHttpApplication
+  {- runApplication -} (defaultHttpEngineRunApplication {m} {tcpSockets})

@@ -5,6 +5,14 @@ import Network.Socket
 
 public export data TcpSocketState = Ready | Bound | Listening | Connected | Failed
 
+Eq TcpSocketState where
+  Ready == Ready = True
+  Bound == Bound = True
+  Listening == Listening = True
+  Connected == Connected = True
+  Failed == Failed = True
+  _ == _ = False
+
 public export addFirstIfJust : Type -> Action (Maybe (Var, a))
 addFirstIfJust ty = Add (
   \inp => case inp of
@@ -17,11 +25,19 @@ public export
 wrappedMaybeCaseOnly : {a : Type} -> {b : Type} -> {c : Type} -> (b -> c) -> b -> b -> Maybe a -> c
 wrappedMaybeCaseOnly f x y m = f (if isJust m then y else x)
 
+public export isConnectedOrFailedState : TcpSocketState -> Bool
+isConnectedOrFailedState Connected = True
+isConnectedOrFailedState Failed = True
+isConnectedOrFailedState _ = False
+
+
 -- Interface built using record not interface so we can use Sock more
 -- easily.
 public export record TcpSockets (m : Type -> Type) where
   constructor MkTcpSockets
   Sock : TcpSocketState -> Type
+  -- A socket which is connected or failed, and which stores its state at runtime
+  CFSock : Type
   socket : ST m (Maybe Var) [addIfJust $ Sock Ready]
   bind : (bindAddr: Maybe SocketAddress)
          -> (port : Int)
@@ -41,6 +57,12 @@ public export record TcpSockets (m : Type -> Type) where
   writeSocket : (out : String) -> (sock : Var) -> ST m (Maybe String) [
     sock ::: Sock Connected :-> wrappedMaybeCaseOnly Sock Failed Connected
   ]
+  toCFSock : (st : TcpSocketState) -> (prf: isConnectedOrFailedState st = True)
+          -> (oldSock : Var)
+          -> ST m () [oldSock ::: (Sock st) :-> CFSock]
+  fromCFSock : (cfSock : Var) -> ST m Bool [
+    cfSock ::: CFSock :-> (\v => Sock (if (v) then Connected else Failed))
+  ]
 
 -- Hardcoded for now - if not, we need to prove it is within bound and non-negative
 readBufSize : ByteLength
@@ -49,6 +71,7 @@ readBufSize = 4096
 %hint export ioTcpSockets : TcpSockets IO
 ioTcpSockets = MkTcpSockets
   {- Sock -} (const $ State Socket)
+  {- CFSock -} (State (Socket, Bool))
   {- socket -} (do
     Right rawSocket <- lift $ Socket.socket AF_INET6 Stream 0
       | Left _ => pure Nothing
@@ -96,6 +119,14 @@ ioTcpSockets = MkTcpSockets
       let sendReturnValueLTELength : LTE countNat (length out) = believe_me ()
       pure $ Just $ substr countNat ((length out) - countNat) out
     )
+  {- toCFSock -} (\st, prf, sock => with ST do
+    update sock $ \rawSock => (rawSock, if st == Connected then True else False)
+  )
+  {- fromCFSock -} (\cfSock => with ST do
+    (rawSock, isConnected) <- read cfSock
+    write cfSock rawSock
+    pure isConnected
+  )
   where
   forkIO : IO () -> IO ()
   forkIO f = do
