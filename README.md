@@ -11,7 +11,7 @@ Installing
 ========
 
 ```idris
-git clone git@git.realestate.com.au:andrew.miller/http4idris.git
+git clone git@github.com:A1kmm/http4idris.git
 cd http4idris
 idris --install http4idris.ipkg
 ```
