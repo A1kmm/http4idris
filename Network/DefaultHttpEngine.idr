@@ -76,8 +76,8 @@ defaultHttpEngineRunApplication : {m : Type -> Type}
                  -> ST m String []
 defaultHttpEngineRunApplication {m} {tcpSockets} bindTo port app =
   do
-    Just listenerSocket <- socket tcpSockets
-      | Nothing => pure "Can't create listener socket"
+    Right listenerSocket <- socket tcpSockets
+      | Left code => pure  ("Can't create listener socket on address " ++ (show bindTo) ++ ", error code: " ++ (show code))
     True <- bind tcpSockets bindTo port listenerSocket
       | False => do
          close tcpSockets listenerSocket
