@@ -38,7 +38,7 @@ public export record TcpSockets (m : Type -> Type) where
   Sock : TcpSocketState -> Type
   -- A socket which is connected or failed, and which stores its state at runtime
   CFSock : Type
-  socket : ST m (Maybe Var) [addIfJust $ Sock Ready]
+  socket : ST m (Either Int Var) [addIfRight $ Sock Ready]
   bind : (bindAddr: Maybe SocketAddress)
          -> (port : Int)
          -> (sock : Var)
@@ -74,9 +74,9 @@ ioTcpSockets = MkTcpSockets
   {- CFSock -} (State (Socket, Bool))
   {- socket -} (do
     Right rawSocket <- lift $ Socket.socket AF_INET6 Stream 0
-      | Left _ => pure Nothing
+      | Left err => pure (Left err)
     lbl <- new rawSocket
-    pure (Just lbl))
+    pure (Right lbl))
   {- bind -} (\addr => \port => \sockVar => do
     resultCode <- (lift $ Socket.bind !(read sockVar) addr port)
     if resultCode == 0 then
