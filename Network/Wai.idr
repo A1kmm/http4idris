@@ -18,6 +18,7 @@ public export
 record HttpRequest where
   constructor MkHttpRequest
   method : String
+  path : String
   headers : List HttpHeader
   body : String
 
@@ -59,3 +60,7 @@ getHttpHeader hn req = find (\h => toLower (headerName h) == toLower hn) (header
 export
 http200 : HttpResponseCode
 http200 = MkHttpResponseCode 200 "OK"
+
+export
+http404 : HttpResponseCode
+http404 = MkHttpResponseCode 404 "Not Found"

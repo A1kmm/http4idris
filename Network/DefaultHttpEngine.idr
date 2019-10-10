@@ -121,7 +121,7 @@ defaultHttpEngineRunApplication {m} {tcpSockets} bindTo port app =
         | Just InvalidRequest => pure (Just InvalidRequest)
       -- TODO: HTTP/2
       if (version == "HTTP/1.1" || version == "HTTP/1.0")
-        then pure $ Just $ ValidRequest $ MkHttpRequest method httpHeaders ""
+        then pure $ Just $ ValidRequest $ MkHttpRequest method path httpHeaders ""
         else pure (Just InvalidRequest)
   
     withContentLength : HttpRequest -> Maybe Nat

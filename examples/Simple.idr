@@ -10,7 +10,11 @@ specificEngine = defaultHttpEngine IO ioTcpSockets
 mainST : ST IO String []
 mainST = runApplication specificEngine Nothing 8080 $
            mkApplication specificEngine $ \engineState, req => do
-            sendResponse specificEngine engineState (MkHttpResponse http200 [] "It works!")
+            sendResponse specificEngine engineState $
+              case path req of
+                "/" => MkHttpResponse http200 [] "It works!"
+                "/hello" => MkHttpResponse http200 [] "Hello world!"
+                _ => MkHttpResponse http404 [] ""
 
 main : IO ()
 main = do
