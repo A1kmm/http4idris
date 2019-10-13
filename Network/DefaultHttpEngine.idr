@@ -42,7 +42,7 @@ httpResponseToString : HttpResponse -> String
 httpResponseToString resp =
   joinByCRLF $ 
    ("HTTP/1.1 " ++ (show . responseNumber . code $ resp) ++ " " ++
-    (show . responseText . code $ resp))::
+    (responseText . code $ resp))::
    ((map httpHeaderToString
          ((MkHttpHeader "Content-Length" (show . Strings.length . body $ resp)) ::
           (headers resp))) ++ ["", body resp])
